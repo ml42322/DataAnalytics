@@ -1,0 +1,752 @@
+---
+title: "DA_FinalP"
+author: "Michell Li, Amanda Le, Natasha Stewart, Zeke Hsieh"
+date: "11/26/2017"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+resource_files:
+- .Renviron
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.world)
+require(MASS)
+require(ISLR)
+require(dplyr)
+require(ggplot2)
+require(shiny)
+library(vcd)
+library(tidyverse)
+library(modelr)
+require(class)
+require(boot)
+library(leaps)
+require(randomForest)
+require(gbm)
+library(e1071)
+library(glmnet)
+require(tree)
+
+```
+
+## **Connecting to data.world** 
+For analysis purposes, we will explain how our dataset works below:
+
+Our dataset comprises of salary and benefits of City employees from the year 2013-2016.
+
+Each unique employee identifier represents one employee. Some rows have the same employee identifier, because he/she works more than one job. Therefore, each row can be thought of as the employee's salary and benefits associated with one job.
+
+Employees with salaries of 0 can be assumed to be retired. Their compensation, therefore, will only be retirement compensation.
+
+Job Family combines similar jobs into a group.
+
+Other salaries can include: Various irregular payments made to City employees including premium pay, incentive pay, or other one-time payments.
+https://data.world/nfs296/f-17-eda-project-5/insights/f76fcf7d-4783-4335-a36a-b21876f05e16
+https://data.world/nfs296/f-17-eda-project-5/insights/2193a87d-72a4-4bb3-8b44-1a458d6c3442
+https://data.world/nfs296/f-17-eda-project-5/insights/d1d8cee7-7e9f-44be-87a7-b338d6473d0a
+https://data.world/nfs296/f-17-eda-project-5/insights/dd41518a-dbf4-414a-b512-d11594e13dc6
+https://data.world/nfs296/f-17-eda-project-5
+```{r}
+project <- "https://data.world/nfs296/f-17-eda-project-5"
+data.world::set_config(cfg_env("DW_API"))
+employee_comp <- data.world::query(
+  data.world::qry_sql("SELECT year_type, year, organization_group_code,organization_group, department_code, department, union_code, union_name, job_family_code, job_family, job_code, job, employee_identifier, salaries, overtime, other_salaries, total_salary, retirement, health_dental, other_benefits, total_benefits, total_compensation FROM Employee_Compensation_SF6"),dataset = project
+  )
+sf_shr = employee_comp %>% dplyr::select(salaries,total_salary,total_compensation, overtime, retirement, health_dental, total_benefits, other_benefits) 
+
+attach(employee_comp)
+summary(employee_comp)
+```
+## Data Visualization and Descriptive Analysis
+To make the data easier to analyze, we created new categorical variable using the salary data. The first category comprises salaries below the 25th percentile; the second category comprises salaries from the 25th percentile to the 50th percentile; the third category comprises salaries from the 50th percentile to the 75th percentile; and the fourth category comprises salaries above the 75th percentile.
+https://data.world/nfs296/f-17-eda-project-5/insights/20d65595-9748-4a21-b375-2e00422bcc24
+```{r warning = FALSE}
+
+employee_comp2 <- data.world::query(
+  data.world::qry_sql("SELECT year_type, year, organization_group_code,organization_group, department_code, department, 
+union_code, job_family_code, job_family, job_code, job, employee_identifier, salaries, 
+overtime, other_salaries, total_salary, retirement, health_dental, other_benefits, total_benefits, total_compensation
+                      FROM Employee_Compensation_SF6"),
+  dataset = project
+  )
+employee_comp2$salaries.recode1[employee_comp2$salaries<23793] <- 0
+employee_comp2$salaries.recode1[employee_comp2$salaries>= 23793 & employee_comp2$salaries<62792] <- 1
+employee_comp2$salaries.recode1[employee_comp2$salaries>= 62792 & employee_comp2$salaries<93119] <- 2
+employee_comp2$salaries.recode1[employee_comp2$salaries>=93119] <- 3
+employee_comp2$salaries.recode1 <- as.factor(employee_comp2$salaries.recode1)
+plot(employee_comp2$salaries.recode1,job_family_code)
+plot(employee_comp2$salaries.recode1,health_dental)
+plot(employee_comp2$salaries.recode1,overtime)
+plot(employee_comp2$job_family_code,employee_comp2$overtime)
+plot(employee_comp2$job_family_code,employee_comp2$total_benefits)
+plot(employee_comp2$job_family_code,employee_comp2$total_salary)
+plot(employee_comp2$organization_group_code,employee_comp2$overtime)
+plot(employee_comp2$union_code,employee_comp2$retirement)
+employee_comp2$year <- as.factor(year)
+#employee_comp2$salaries.recode1 <- NULL
+#employee_comp2$salaries.recode2 <- NULL
+#employee_comp2$saralies.recode3 <- NULL
+#employee_comp2$salaries.recode4 <- NULL
+
+```
+##Linear Regression - Amanda 
+We are going to be looking at two response variables: 'total_salary' and 'total_compensation.' Due to how 'salaries', 'overtime', 'other_salaries' sum up to 'total_salary' and how they also sum up with 'retirement', 'health_dental', 'other_benefits', and 'total_benefits' to build 'total_compensation', we are going to exclude them from the predictors.
+
+This leaves 'year', 'organization_group', 'department', 'union_name', 'job_family', and 'job'. Notice how besides 'year', these are all categorical variables. This makes linear regression less than ideal, so proceed with caution. Running pairs on the three numerical variables we have left:
+
+Notice that here is a slight increase in salary and compensation as year increases. Furthermore, 'total_salary' and 'total_compensation' are so heavily correlated that getting a model for one will essentially be getting one for the other.
+https://data.world/nfs296/f-17-eda-project-5/insights/c78a0963-c78f-4290-87bf-a48f1c3efc19
+```{r warning = FALSE}
+set.seed(80085)
+
+sf_lin = employee_comp %>% dplyr::select(year,total_salary,total_compensation, organization_group, department, union_name, job_family, job) 
+lin_fit = lm(total_salary ~ year + department + job, data = sf_lin)
+
+#summary(lin_fit)
+
+plot(lin_fit)
+#lin_fit3 = lm(total_salary ~ year + department * union_name + job, data = sf_lin)
+#summary(lin_fit3)
+
+```
+In the case of interactions, we should be wary, as there is mostly categorical data available to us - and lots of it. Using SQL we can count the different cases within each categorical variable:
+
+organizational_group: 7  
+department: 54  
+union_name: 73  
+job_family:  55  
+job: 1,138  
+When you introduce interactions, you are essentially adding n x m coefficients into the equation, on an already large data set. This has a risk of not being as efficient or running into issues with the machine running the amount of processes - so we should be careful as we progress to a more complicated multi-predictor linear regression.
+
+##Exponential Transformation - Natasha
+It appears that the relationship between salary and health/dental benefits might not be linear.
+https://data.world/nfs296/f-17-eda-project-5/insights/9479528e-3677-4722-83f7-44dba979ca4c
+```{r warning = FALSE}
+#Filter out extreme salaries
+exp_grw <- employee_comp %>% dplyr::filter(health_dental>0,salaries>0) %>% dplyr::mutate(lsalaries = log2(salaries))
+ggplot(exp_grw, aes(x=health_dental, y=salaries)) + geom_point()
+ggplot(exp_grw, aes(health_dental, lsalaries)) + geom_hex(bins = 50)
+
+mod_exp_grw <- lm(lsalaries ~ health_dental, data = exp_grw)
+summary(mod_exp_grw)
+```
+We thought that an exponential model might be more appropriate than a linear one. We plotted the log of salary against the amount of health/dental benefits; however, our hypothesis was not correct. This transformation did not produce a linear relationship.
+```{r}
+grid <- exp_grw %>% data_grid(health_dental = seq_range(health_dental, 20)) %>% 
+add_predictions(mod_exp_grw, "lsalaries") %>% mutate(salaries = 2 ^ lsalaries)
+
+ggplot(exp_grw, aes(health_dental, lsalaries)) + 
+geom_point() + 
+geom_line(data = grid, colour = "red", size = 1)
+
+```
+Even though this appears to be a poor fit, the resulting transformation seems to fit the original data reasonably well.
+```{r}
+ggplot(exp_grw, aes(x=health_dental, y=salaries)) + geom_point() + 
+geom_line(data = grid, colour = "red", size = 1)
+
+```
+
+
+##Power-Law Residual Analysis - Natasha 
+An exponential transformation did not seem to fit the data well, so we tried a power-law transformation instead. Plotting the log of salary against the log of health/dental benefits did produce a linear relationship with a high R-squared value, indicating that a power-law transformation is appropriate here.
+New data frame called power_law which filters out extreme salariess and takes the log of salaries and health_dental.
+https://data.world/nfs296/f-17-eda-project-5/insights/eee3e8fb-cdad-406b-aca1-f4ea41f7d875
+https://data.world/nfs296/f-17-eda-project-5/insights/0b7fd2ca-7b09-4ff5-ab6d-cafeb36dc3a2
+```{r}
+power_law <- employee_comp %>% dplyr::filter(health_dental>0, salaries>0) %>% dplyr::mutate(lsalaries = log2(salaries), lhealth_dental = log2(health_dental))
+#The remainder of the code closely follows the procedure presented in class
+ggplot(power_law, aes(x=lhealth_dental, y=lsalaries)) + geom_point()
+mod_power_law <- lm(lsalaries ~ lhealth_dental, data = power_law)
+summary(mod_power_law)
+```
+We ran some diagnostics to assess the appropriateness of a linear fit between log(salary) and log(health/dental).
+
+- It appears that there were just as many residuals above zero as below zero, indicating that a linear fit is appropriate.
+- A plot of scale vs. fitted also produced a fairly straight trend line, suggesting that the variance among the residuals is fairly constant and the relationship is reasonably linear.
+- Nevertheless, the residuals are not quite normally distributed, so the linear relationship between the log of salary and the log of health/dental is not perfect.
+https://data.world/nfs296/f-17-eda-project-5/insights/0b7fd2ca-7b09-4ff5-ab6d-cafeb36dc3a2
+```{r}
+plot(mod_power_law)
+#r^2 indcates a small-medium effect
+grid <- power_law %>% data_grid(lhealth_dental = seq_range(lhealth_dental, 10)) %>% 
+add_predictions(mod_power_law, "lsalaries") %>% mutate(salaries = 2 ^ lsalaries, health_dental = 2 ^ lhealth_dental)
+ggplot(power_law, aes(lhealth_dental, lsalaries)) + 
+geom_point() + 
+geom_line(data = grid, colour = "red", size = 1)
+ggplot(power_law, aes(x=health_dental, y=salaries)) + geom_point() + 
+geom_line(data = grid, colour = "red", size = 1)
+
+#Simple linear model for comparison
+linear_model <- lm(salaries~health_dental)
+summary(linear_model)
+
+```
+The power-law transformation is not simply a linear model (although the slope increases slowly, giving the appearance of linearity). It actually performs substantially better than simple linear regression.
+
+As this output from R shows, the linear model of salary vs. health/dental benefits has an R-squared value of only 0.5977, compared to an R-squared of 0.8756 for the linear model of log(salary) vs. log(health/dental).
+
+## LDA - Amanda
+Of course, we were wanting to run LDA to predict levels in 'total_salary'. However, there was an issue choosing possible predictors - most of the numerical predictors were correlated with 'total_salary'. Of those that weren't, there were few that were continuous. This resulted in only being able to use one predictor - 'year,' which does not make for a very descriptive model. So although it technically "worked," results should be taken with a grain of salt.
+
+We started this model by taking a more workable subset of 1% like in the previous models. We created a new variable, called 'salary_level', after calculating the average salary:
+  https://data.world/nfs296/f-17-eda-project-5/insights/e58205bf-6ee7-4d3e-8cb8-21e800fb56e0
+```{r}
+set.seed(80085)
+sf_sub = employee_comp %>% dplyr::select(year,total_salary,total_compensation, organization_group_code, department, union_code, job_family, job, employee_identifier, overtime, retirement, health_dental) 
+#predicting 'total_salary'
+median(sf_sub$total_salary)
+sf_sub = sf_sub %>% dplyr::mutate(salary_level = ifelse(total_salary < 68000, 'below average', 'above average'))
+train = sf_sub$employee_identifier < 26522
+lda.fit = lda(salary_level~year, data = sf_sub, subset = train)
+lda.fit
+plot(lda.fit)
+```
+After plotting the resulting model, you can see the two groups are actually quite similar. This is due to the issue of using 'year' as a predictor. You can see the similarities in the distribution of the 'year' variable.
+```{r}
+sf_sub2 = subset(sf_sub, employee_identifier > 26522)
+lda.pred = predict(lda.fit, sf_sub2)
+df = data.frame(lda.pred)
+#dev.off()
+ggplot(df) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class)
+ggplot(df) + geom_boxplot(mapping = aes(x=class, y=LD1))
+table(lda.pred$class,sf_sub2$salary_level)
+mean(lda.pred$class==sf_sub2$salary_level)
+
+ggplot(data = sf_sub, mapping = aes(x = year, y=total_salary)) + geom_point()
+#View(sf_sal)
+```
+Notice how the model never predicts a below average salary level. The model has a mere accuracy of 50% - the same as rolling a dice. This isn't to say LDA isn't a good method, which I will expand upon later, but speaks more to the importance of having both continuous and categorical data that are not strongly correlated to the response variable.
+
+After trying to predict 'total_salary', we sought to create a more useful model. We wanted to see if you could predict someone's amount of overtime based on their health_dental and retirement benefits. This also brought on it's own issue - there is a heavy amount of people who do not have an overtime at all:
+  https://data.world/nfs296/f-17-eda-project-5/insights/de488768-f494-4ea8-8336-00c831420e1c
+```{r}
+#predicting 'overtime'
+set.seed(80085)
+sf_sub = sf_sub %>% dplyr::mutate(overtime_level = ifelse(overtime < 4428, 'below average', 'above average'))
+
+plot(sf_sub$overtime)
+```
+Notice I used the mean instead of the median - this is also due to the amount of people who have no overtime, as the median was also 0.
+The resulting plot:
+```{r}
+lda.fit = lda(overtime_level~health_dental+retirement, data = sf_sub, subset = employee_identifier < 26522)
+
+lda.fit
+plot(lda.fit)
+sf_sub2 = subset(sf_sub, employee_identifier > 26522)
+lda.pred = predict(lda.fit, sf_sub2)
+df = data.frame(lda.pred)
+ggplot(df) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class)
+ggplot(df) + geom_boxplot(mapping = aes(x=class, y=LD1))
+table(lda.pred$class,sf_sub2$overtime_level)
+mean(lda.pred$class==sf_sub2$overtime_level)
+
+things = sf_sub %>% dplyr::filter(overtime == 0)
+1638/2904
+#.56 is zero
+#.21 above 
+```
+It also seems there is a lot more information on the 'below average' group, which actually goes against my own intuition. As expected, the model overwhelmingly predicts below average overtime levels. However, there are few times where it predicts above average and is correct - which is a great sign.
+The model has an accuracy of 80%. I find this impressively high, considering that in this data (1) over half had '0' overtime values, and (2) ~20% overtime values were 'above average'.
+
+
+##QDA - Natasha
+We used quadratic discriminant analysis to predict salary from health and dental benefits. To compare QDA to logistic regression, we used the same dummy variable, splitting salary into two groups based on the 50th percentile.
+https://data.world/nfs296/f-17-eda-project-5/insights/155e82dc-ab23-4001-a733-7f350cee4090
+```{r}
+train = employee_identifier > 26999 
+employee_comp$salaries.recode2 <- NA
+employee_comp$salaries.recode2[employee_comp$salaries>= 62792] <- 1
+employee_comp$salaries.recode2[employee_comp$salaries< 62792] <- 0 
+qda.fit = qda(employee_comp$salaries.recode2~health_dental, data = employee_comp, subset=train)
+qda.fit
+data.train=subset(employee_comp,train)
+qda.class = predict(qda.fit, data.train)
+table(qda.class$class ,data.train$salaries.recode2)
+mean(qda.class$class==data.train$salaries.recode2)
+#employee_comp$salaries.recode2 <- NULL
+```
+
+##KNN Analysis - Michell
+Prediction of Total Salary
+Intuitively it made sense to predict 2015 and 2016 total salaries from 2013 and 2014 data. The mean, however, tells a different story at .0005.
+
+Once I split the training data using employee_identifier (which is randomly assigned by the data set every time it is updated by the city of San Francisco), the mean significantly increased to .0013, which is still not great. But, relative to splitting data by year, it is.
+https://data.world/nfs296/f-17-eda-project-5/insights/fdce6f05-a2b4-4c73-b415-97c63d9e10d1 
+
+```{r}
+Xlag=cbind(salaries,total_compensation)
+train=year<2014
+knn.pred=knn(Xlag[train,],Xlag[!train,],total_salary[train],k=1)
+mean(knn.pred==total_salary[!train])
+
+# training data using employee identifier 
+Xlag=cbind(salaries,total_compensation)
+train=employee_identifier<26999
+knn.pred=knn(Xlag[train,],Xlag[!train,],total_salary[train],k=1)
+mean(knn.pred==total_salary[!train])
+
+```
+
+##Logistic Regression - Natasha
+To apply logistic regression to this data set, we created two categories for salary - below the 50th percentile (classified as a zero) and above the 50th percentile (classified as a one). Then we used a logistic model to predict which category each employee falls under based on his or her health and dental benefits.
+
+We trained the model on the data for employee with an identifier greater than 26,999 and tested the model on the remaining data. Each employee's identifier is randomly assigned by the city of San Francisco, so the training and test sets should also be random.
+
+The model correctly predicted whether an employee's salary was above or below the 50th percentile in approximately 84 percent of cases.
+As this confusion matrix reveals, the model had an extremely low false negative rate but a relatively large false positive rate.
+https://data.world/nfs296/f-17-eda-project-5/insights/575aab9a-b354-4c03-9e8d-2ae93453dfc1
+
+```{r}
+ggplot(employee_comp, aes(x=health_dental, y=employee_comp$salaries.recode2)) + geom_point() + geom_smooth(method="glm", method.args=list(family="binomial"))
+glm.fit2=glm(employee_comp$salaries.recode2~health_dental,
+             employee_comp,family=binomial, subset=train)
+glm.probs2=predict(glm.fit2,employee_comp[!train,],type='response') 
+
+glm.pred2=ifelse(glm.probs2 > 0.476,1,0)
+salaries.recode2test=employee_comp$salaries.recode2[!train]
+table(glm.pred2,salaries.recode2test)
+mean(glm.pred2==salaries.recode2test)
+
+```
+##ROC and Cost Curves - Natasha
+ROC curve for Logistic Regression
+https://data.world/nfs296/f-17-eda-project-5/insights/cdc15cad-b8c6-45ff-a6bf-7fafb6bf6984
+```{r warning = FALSE}
+employee_comp2$salaries.recode2[employee_comp2$salaries>= 62792] <- 1
+employee_comp2$salaries.recode2[employee_comp2$salaries< 62792] <- 0 
+calculate_roc <- function(employee_comp2, cost_of_false_positive, cost_of_false_negative, n=100) {
+  true_positive_rate <- function(employee_comp2, threshold) {
+    sum(glm.probs2 >= threshold & employee_comp2$salaries.recode2[!train] == 1) / sum(employee_comp2$salaries.recode2[!train] == 1)
+  }
+  
+  false_positive_rate <- function(employee_comp2, threshold) {
+    sum(glm.probs2 >= threshold & employee_comp2$salaries.recode2[!train] == 0) / sum(employee_comp2$salaries.recode2[!train] == 0)
+  }
+  
+  cost <- function(employee_comp2, threshold, cost_of_false_positive, cost_of_false_negative) {
+    sum(glm.probs2 >= threshold & employee_comp2$salaries.recode2[!train] == 0) * cost_of_false_positive + sum(glm.probs2 < threshold & employee_comp2$salaries.recode2[!train] == 1) * cost_of_false_negative
+  }
+  
+  roc <- data.frame(threshold = seq(0,1,length.out=n), true_positive_rate=NA, false_positive_rate=NA)
+  roc$true_positive_rate <- sapply(roc$threshold, function(th) true_positive_rate(employee_comp2, th))
+  roc$false_positive_rate <- sapply(roc$threshold, function(th) false_positive_rate(employee_comp2, th))
+  roc$cost <- sapply(roc$threshold, function(th) cost(employee_comp2, th, cost_of_false_positive, cost_of_false_negative))
+  
+  return(roc)
+}
+roc <- calculate_roc(employee_comp2,1,1,n=1000)
+plot(roc$false_positive_rate,roc$true_positive_rate, main="ROC",
+  xlab="False Positive Rate", ylab="True Positive Rate")
+
+employee_comp2$salaries.recode2 <- NULL
+```
+Clearly, the model predicts the data much more accurately than would be expected by pure chance (a straight line through the plot). However, the curve misses the upper left corner, indicating that there is some trade-off between a high true positive rate and a low false positive rate. That is, lowering the false negative rate will raise the false positive rate.
+
+
+## Resampling Methods - Amanda
+As a disclaimer, we should mention only simple models work for these methods due to the sheer size of our data. We will be investigating our base function from linear regression (total salary ~ year), as well as taking a sample as we did previously.
+https://data.world/nfs296/f-17-eda-project-5/insights/91617ec3-af5a-4683-9f94-91fda8ae1154
+```{r}
+set.seed(80085)
+sf_sub = employee_comp %>% dplyr::select(year,total_salary,total_compensation, organization_group_code, department, union_name, job_family, job, employee_identifier, overtime, retirement, health_dental) 
+
+plot(total_salary~year,data=sf_sub)
+```
+###Leave One Out Cross Validation
+Leave out out is pretty straight forward - we had to limit the amount of degrees just due to the span of year available of our data set.
+```{r}
+glm.fit=glm(total_salary ~ year,data=sf_sub)
+
+loocv=function(fit){
+  h=lm.influence(fit)$h
+  mean((residuals(fit)/(1-h))^2)
+}
+
+loocv(glm.fit)
+#2835776478
+
+cv.error=rep(0,3)
+degree=1:3
+for(d in degree){
+  glm.fit=glm(total_salary~poly(year,d), data=sf_sub)
+  cv.error[d]=loocv(glm.fit)
+}
+plot(degree,cv.error,type="b") 
+
+
+```
+We see that the error only rises as we raise to a power - therefore we were correct in not utilizing any poly() function in our final iteration of the linear regression.
+### K Fold Cross Validation
+```{r}
+cv.error10=rep(0,3)
+for(d in degree){
+  glm.fit=glm(total_salary~poly(year,d), data=sf_sub)
+  cv.error10[d]=cv.glm(sf_sub,glm.fit,K=10)$delta[1]
+}
+plot(degree,cv.error10,type="b")
+
+```
+The resulting plot leads to the same conclusion - the utilization of poly() would only add to our MSE.
+
+###Boostrap
+```{r}
+alpha=function(x,y){
+  vx=var(x)
+  vy=var(y)
+  cxy=cov(x,y)
+  (vy-cxy)/(vx+vy-2*cxy)
+}
+alpha(sf_sub$total_salary,sf_sub$year)
+#2.354977e-07
+
+alpha.fn=function(data, index){
+  with(data[index,],alpha(total_salary,year))
+}
+
+alpha.fn(sf_sub,1:100)
+#-3.759748e-06
+
+set.seed(143)
+alpha.fn (sf_sub,sample(1:100,100,replace=TRUE))
+
+boot.out=boot(sf_sub,alpha.fn,R=1000)
+boot.out
+plot(boot.out)
+
+statistic <- function(data, index) {
+  lm.fit <- lm(total_salary ~ year, data = sf_sub, subset = index)
+  coef(lm.fit)
+}
+
+statistic(sf_sub, 1:2904)
+set.seed(143)
+boot(sf_sub, statistic, 1000) # In the output, t1 is the intercept and t2 is the coefficient
+
+summary(lm(total_salary ~ year, data = sf_sub)) 
+#compare the SE 
+
+quad.statistic <- function(data, index) {
+  lm.fit <- lm(total_salary ~ poly(year, 2), data = sf_sub, subset = index)
+  coef(lm.fit)
+}
+
+set.seed(143)
+boot(sf_sub, quad.statistic, 1000)
+
+```
+Our bootstrap results are (rather, albeit not perfectly) normally distributed. Notice how the SE differentiates than our original of ~52330. (This SE is dependent on the sample we took earlier, while the SE developed by bootstrapping is less likely to be affected.)
+
+##Subset selection - Natasha
+###Best Subset 
+We wanted to determine which factors were important in predicting an employee's union code. The variables that we considered were overtime, salaries, other salaries, total salary, retirement, health and dental, other benefits, and total benefits.
+
+We found that Mallow's CP was minimized with six variables - overtime, salaries, other salaries, health and dental, other benefits, and total salary.
+
+The variables related to salary, i.e. salaries, other salaries, and total salary seemed to be the most important in predicting an employee's union code. Meanwhile, overtime, retirement, and total benefits were relatively unimportant.
+https://data.world/nfs296/f-17-eda-project-5/insights/68b6335c-26db-4897-99fd-22e6ad20b051
+```{r warning = FALSE}
+employee_comp$organization_group_code <- as.factor(employee_comp$organization_group_code)
+employee_comp$union_code <- as.factor(employee_comp$union_code)
+employee_comp$job_family_code <- as.factor(employee_comp$job_family_code)
+
+regfit.full=regsubsets(union_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp, nvmax=8, really.big = F)
+reg.summary=summary(regfit.full)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+plot(regfit.full,scale="Cp")
+coef(regfit.full,6)
+```
+
+Best Subsets Regression to Predict Job Family Code
+We wanted to determine if the same factors were important in predicting both an employee's union code and job family code. Again, we used best subsets regression, considering the variables overtime, salaries, other salaries, total salary, retirement, health and dental, other benefits, and total benefits.
+
+The same six variables minimized Mallow's CP: overtime, salaries, other salaries, health and dental, other benefits, and total salary.
+https://data.world/nfs296/f-17-eda-project-5/insights/c56b30cf-0793-448e-82f4-3e4e3d4b2b47
+```{r warning = FALSE}
+regfit.full=regsubsets(job_family_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp, nvmax=8, really.big = F)
+reg.summary=summary(regfit.full)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+plot(regfit.full,scale="Cp")
+coef(regfit.full,6)
+```
+Health and dental benefits as well as total salary seemed to have the largest impact on an employee's job family code. Interesting, retirement was not a good predictor.
+
+
+Best Subsets Regression to Predict Organization Group Code
+Now, we will use best subsets regression with the same variables (overtime, salaries, other salaries, total salary, retirement, health and dental, other benefits, and total benefits) to predict an employee's organization group code.
+
+The most important variables are different this time. A combination of five variables - overtime, salaries, other salaries, total salary, and total benefits - minimizes Mallow's CP.
+https://data.world/nfs296/f-17-eda-project-5/insights/ec0a6d85-e265-43da-bc8f-0c77c16ecff9
+```{r warning = FALSE}
+regfit.full=regsubsets(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp, nvmax=8, really.big = F)
+reg.summary=summary(regfit.full)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+plot(regfit.full,scale="Cp")
+coef(regfit.full,5)
+```
+
+Once again, total salary is one of the most important variables and retirement is one of the least important.
+
+Total benefits seems to be more important in predicting an employee's organization than in predicting his or her union code.
+
+###Forward and Backward Selection
+We created a model to predict an employee's organization code using both forwards and backwards selection. The variables that we considered were overtime, salaries, other salaries, total salary, retirement, health and dental, other benefits, and total benefits.
+
+https://data.world/nfs296/f-17-eda-project-5/insights/53a652fa-3dcd-487b-b702-4ee48f16080a
+**Error in mean**
+```{r warning = FALSE}
+#forward
+employee_comp$organization_group_code <- as.numeric(employee_comp$organization_group_code)
+employee_comp<- na.omit(employee_comp)
+summary(employee_comp)
+train= employee_identifier <= 26522 
+regfit.fwd=regsubsets(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[train,],nvmax=6,method="forward")
+summary(regfit.fwd)
+val.errors=rep(NA,6)
+x.test=model.matrix(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[-train,])
+
+
+summary(x.test)
+for(i in 1:6){
+  coefi=coef(regfit.fwd,id=i)
+  names(coefi)
+  pred=x.test[,names(coefi)]%*%coefi
+  val.errors[i]=mean((employee_comp$organization_group_code[-train]-pred)^2)
+}
+plot(sqrt(val.errors),ylab="Root MSE",ylim=c(0,7),pch=6,type="b")
+points(sqrt(regfit.fwd$rss[-1]/1452),col="blue",pch=6,type="b")
+legend("topright",legend=c("Training","Validation"),col=c("blue","black"),pch=6)
+
+#backward
+regfit.fwd=regsubsets(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[train,],nvmax=6,method="backward")
+summary(regfit.fwd)
+val.errors=rep(NA,6)
+x.test=model.matrix(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[-train,])
+
+
+summary(x.test)
+for(i in 1:6){
+  coefi=coef(regfit.fwd,id=i)
+  names(coefi)
+  pred=x.test[,names(coefi)]%*%coefi
+  val.errors[i]=mean((employee_comp$organization_group_code[-train]-pred)^2)
+}
+plot(sqrt(val.errors),ylab="Root MSE",ylim=c(0,7),pch=6,type="b")
+points(sqrt(regfit.fwd$rss[-1]/1452),col="blue",pch=6,type="b")
+legend("topright",legend=c("Training","Validation"),col=c("blue","black"),pch=6)
+```
+The error was practically ideal for these two models. The choice of algorithm (forwards/backwards) does not seem to be important.
+
+Interestingly, both of these algorithms found that retirement was one of the most important factors in predicting organization code, which is opposite of the best subsets regression.
+
+## Shrinkage Methods - Michell 
+### Ridge Regression
+https://data.world/nfs296/f-17-eda-project-5/insights/3d089ced-1369-4dfd-bf3a-9d7e1a368822
+```{r}
+summary(sf_shr) 
+x=model.matrix(salaries~.,data=sf_shr) 
+y=sf_shr$salaries
+
+fit.ridge=glmnet(x,y,alpha=0)
+plot(fit.ridge,xvar="lambda",label=TRUE)
+
+#cross validation
+cv.ridge=cv.glmnet(x,y,alpha=0)
+plot(cv.ridge)
+```
+### Lasso 
+https://data.world/nfs296/f-17-eda-project-5/insights/64d87f37-86e0-4289-944a-56b3595aae97
+```{r}
+x=model.matrix(salaries~.,data=sf_shr) 
+y=sf_shr$salaries
+fit.lasso=glmnet(x,y)
+plot(fit.lasso,xvar="lambda",label=TRUE)
+
+#cross validation
+cv.lasso=cv.glmnet(x,y)
+plot(cv.lasso)
+coef(cv.lasso)
+
+```
+
+##Decision Trees
+We created levels for salary called 'sal_level', breaking 'total_salary' up into three levels. Since there is very few numerical data, we chose to use codes for categorical data.:
+  
+https://data.world/nfs296/f-17-eda-project-5/insights/57969451-59ab-4bb8-ac82-d27747cff805
+https://data.world/nfs296/f-17-eda-project-5/insights/0dee33d7-314f-4f1b-8a4d-c4a3a4bbbfbe
+
+##Bagging, Random Forests, Boosting - Natasha
+We randomly sampled half of the data (the largest amount we could use without causing RStudio to crash). This took my computer multiple hours to process, so we will use a smaller sample size in the interactive document. Then we created three generalized boosting regression models to predict union code, job family code, and organization code from the variables that we re-named.
+
+The following plots show which factors had the greatest relative influence on each of these models.
+https://data.world/nfs296/f-17-eda-project-5/insights/22d83021-b6c3-4682-9486-b913a1d02f19
+https://data.world/nfs296/f-17-eda-project-5/insights/3fb50349-0219-40bd-9dd2-f545ff221a91
+https://data.world/nfs296/f-17-eda-project-5/insights/904ea2a0-d318-4069-b748-a4a090e73a2e
+```{r}
+set.seed(809985)
+sf_forest = employee_comp %>% dplyr::select(year,overtime,salaries,other_salaries,retirement,health_dental,other_benefits,total_benefits,total_salary,total_compensation, organization_group_code, organization_group, department, department_code, job_family_code,job, job, union_code) 
+train=sample(1:nrow(sf_forest),1000)
+
+sf_forest$salaries.recode2 <- NULL
+sf_forest$job_family_code <- as.factor(sf_forest$job_family_code)
+sf_forest$job_family_code <- droplevels(sf_forest$job_family_code)
+rf.total_salary=randomForest(job_family_code ~year+overtime+salaries+other_salaries+retirement+health_dental+other_benefits+total_benefits+total_salary+total_compensation,data=sf_forest,na.action=na.omit)
+rf.total_salary
+
+sf_forest$salaries.recode2 <- NULL
+sf_forest$union_code <- as.factor(sf_forest$union_code)
+sf_forest$union_code <- droplevels(sf_forest$union_code)
+rf.total_salary=randomForest(union_code ~year+overtime+salaries+other_salaries+retirement+health_dental+other_benefits+total_benefits+total_salary+total_compensation,data=sf_forest,na.action=na.omit)
+rf.total_salary
+
+```
+Organization Code Model:
+```{r}
+sf_forest$organization_group_code <- as.factor(sf_forest$organization_group_code)
+rf.total_salary=randomForest(organization_group_code ~year+overtime+salaries+other_salaries+retirement+health_dental+other_benefits+total_benefits+total_salary+total_compensation,data=sf_forest,na.action=na.omit,subset=train)
+rf.total_salary
+
+```
+
+We re-named the variables as follows:
+```{r}
+sf_forest <- sf_forest %>%dplyr::rename(OB = `other_benefits`,
+S = `salaries`,
+TB = `total_benefits`,
+HD = `health_dental`, R  = `retirement`, TC = `total_compensation`, OS = `other_salaries`, O = `overtime`, TS = `total_salary`, Y = `year`)
+```
+
+Job Family Code Model:
+```{r}
+sf_forest$job_family_code <- as.numeric(sf_forest$job_family_code)
+sf_forest <- transform(sf_forest, job_family_code = ifelse(is.na(job_family_code), mean(job_family_code, na.rm=TRUE), job_family_code))
+boost.oil=gbm(job_family_code ~Y+O+S+OS+TB+HD+R+TC+TS,data=sf_forest,distribution="gaussian",n.trees=10000,shrinkage=0.01,interaction.depth=4)
+summary(boost.oil)
+
+boost.oil=gbm(organization_group_code ~Y+O+S+OS+TB+HD+R+TC+TS,data=sf_forest,distribution="gaussian",n.trees=10000,shrinkage=0.01,interaction.depth=4)
+summary(boost.oil)
+```
+Union Code Model:
+```{r}
+sf_forest$union_code <- as.numeric(sf_forest$union_code)
+sf_forest <- transform(sf_forest, union_code = ifelse(is.na(union_code), mean(union_code, na.rm=TRUE), union_code))
+boost.oil=gbm(union_code ~Y+O+S+OS+TB+HD+R+TC+TS,data=sf_forest,distribution="gaussian",n.trees=10000,shrinkage=0.01,interaction.depth=4)
+summary(boost.oil)
+
+```
+Total benefits and salary seemed to have the largest relative influence on an employee's union code. However, the factors related to salary were relatively unimportant in predicting an employee's organization code and job family code. The boosting models found that overtime and job benefits (health and dental benefits, retirement, and total benefits) had a large influence on these variables. This is consistent with forwards and backwards selection, which found that retirement and health/dental benefits) were important in predicting an employee's organization code.
+
+## Support Vector Machines - Zeke
+We tried to predict organization group code using Support Vector Machines, with all of the numerical data as the predictors. We attempted both radial and linear SVMs. The results were mediocre, with the SVM good at predicting groups 1 and 4, but bad at predicting 4, 6, and 7.
+https://data.world/nfs296/f-17-eda-project-5/insights/75f4240f-1042-41d5-ae8d-fb7f3d2ad12a
+https://data.world/nfs296/f-17-eda-project-5/insights/99265fc7-e5ae-4416-aa73-cb4ff8b134ac
+https://data.world/nfs296/f-17-eda-project-5/insights/6b2b4b12-f269-4e89-be87-4d3308ab363d
+```{r}
+employee_compSVM <- data.world::query(
+  data.world::qry_sql("SELECT year, organization_group_code, salaries, overtime, other_salaries, total_salary,retirement, health_dental, other_benefits, total_benefits, total_compensation
+                      FROM employee_compensation_SF6"),
+  dataset = project
+  )
+
+x <- subset(employee_compSVM, select=-employee_compSVM$organization_group_code)
+y <- employee_compSVM$organization_group_code
+
+linear_svm_model <- svm(x,y, kernel="linear", type = "C")
+summary(linear_svm_model)
+linear_pred <- predict(linear_svm_model,x)
+table(linear_pred,y)
+
+radial_svm_model <- svm(x,y, kernel="radial", type = "C")
+summary(radial_svm_model)
+radial_pred <- predict(radial_svm_model,x)
+table(radial_pred,y)
+```
+According to the results from my SVM analysis, it is quite evident that a radial SVM is better than the linear SVM at predicting organization gorup code. The radial model was significantly better at predicting groups 1 and 5, and moderately better at predicting groups 4 and 6. Unfortunately, it was unable to predict 3 or 7 at all (linear likewise) and was very slightly worse at predicting group 2.
+
+Both models were very biased towards picking group 2, which may be somewhat due to the fact that group 2 had the greatest number of data points.
+
+Both SVMs were generated from only 1% of the data to save on processing time, but it is highly recommended that similar models be trained on a much larger set of the data, maybe 10% or 20%. 
+## Unsupervised learning - Michell
+###PCA
+https://data.world/nfs296/f-17-eda-project-5/insights/1b3a0acd-24ac-473c-809a-3c4e960b424b
+https://data.world/nfs296/f-17-eda-project-5/insights/6a0fb9b0-fde0-4c9e-ad9d-25e4f31f39bb
+```{r}
+employee_comp3 <- data.world::query(
+  data.world::qry_sql("SELECT salaries, overtime, total_salary, retirement, health_dental, other_benefits, total_benefits, total_compensation FROM Employee_Compensation_SF6 GROUP BY organization_group"),dataset = project
+)
+
+set.seed(2)
+dimnames(employee_comp3)
+apply(employee_comp3,2,mean)
+apply(employee_comp3,2, var)
+pca.out=prcomp(employee_comp3, scale=TRUE)
+pca.out
+names(pca.out)
+biplot(pca.out, scale=0)
+plot(pca.out, type="l")
+
+```
+PC1 - explains the majority of the variance; loaded by all predictors evenly, mixed
+PC2 - proportion of variance explained drops significantly and remains consistently low with rest of PCs; loaded by other_salaries
+PC3 - loaded by retirement and health_dental
+PC4 - loaded by  overtime
+PC5 - loaded by other_benefits 
+PC6 - loaded by retirement and overtime
+PC7 -loaded by total_compensation and total_salary 
+3 and 7 are Human Welfare & Neighborhood Development and Community Health respectively. They have similar response patterns and tend to rely on other_salaries. These two organizational groups have similar attributes relating to human wellbeing, so it makes sense.
+
+Furthermore we see that 3, 7, and 4 are quite related just like 5 and 6 are. The organizational groups are quite split. It is not clear as to which compensation type(s) distinguish this split, though.
+
+
+###K-Means Clustering
+https://data.world/nfs296/f-17-eda-project-5/insights/416f4ee5-f65c-44e8-aa85-773e886ea59d
+https://data.world/nfs296/f-17-eda-project-5/insights/4ff20620-194f-466d-a8bc-d7fb6dfe9c17
+```{r}
+set.seed(101)
+x=matrix(employee_comp2$salaries,14520,1)
+km.out=kmeans(x,4,nstart=15)
+km.out
+
+plot(x,col=km.out$cluster,cex=.1,pch=.5,lwd=.5)
+```
+After getting an incredibly bizarre and intriguing K-Means clustering chart, we struggled to interpret it. Since we ourselves classified salaries into 4 buckets, we knew that K = 4 and is what each color represents. Those are our 'clusters.' 91% indicates that our data points cluster quite nicely, with our second cluster tier being significantly larger than the others. Makes sense, because the cluster mean of $61,620 indicates a middle class range.
+
+
+###Hierarchical Clustering
+We will use these same data and use hierarchical clustering.
+https://data.world/nfs296/f-17-eda-project-5/insights/80bff7d5-1b46-483f-9970-e82506c55b54
+```{r}
+hc.complete=hclust(dist(x),method="complete")
+plot(hc.complete)
+hc.single=hclust(dist(x),method="single")
+plot(hc.single)
+hc.average=hclust(dist(x),method="average")
+plot(hc.average)
+
+hc.cut=cutree(hc.complete,4)
+table(hc.cut,km.out$cluster)
+```
+Lets compare this with the actualy clusters in the data. We will use the function `cutree` to cut the tree at level 4.
+This will produce a vector of numbers from 1 to 4, saying which branch each observation is on.
+
+
+## Interesting Findings 
+https://data.world/nfs296/f-17-eda-project-5/insights/20068729-317e-4e02-9745-0644d6535ff0
+https://data.world/nfs296/f-17-eda-project-5/insights/ce153de4-2d3a-4c17-ad18-b97e66c220d8
+1. The relationship between salary and health and dental benefits is non-linear. By applying a power law transformation. we found that health and dental benefits tend to level off after a certain salary is reached.
+2. It is easy to predict whether or not an employee’s salary is below or above the median using his or her health and dental benefits.
+3. An employee’s salary and overtime are strongly associated with his or her union code, job family code, and organization code.
+4. Health and dental benefits are an important predictor of job family code but not a very significant predictor of union code or organization group code.
+5. It is slightly easier to predict an employee’s union code than his or her job family code or organization code. All three can be predicted with 60-70% accuracy with a random forest model.
+6. PCA and Forwards/Backwards selection to assess organization group found similar results. The variable retirement is significant in contributing to the variance found in 4 of 7 principle components.
+7. In the K Means Clustering model, we see that lower class and middle class have about the same cluster size, indicating that there is a similar number of people in the public sector in the two lowest classes. In contrast, upper middle and upper class has a large difference in number of people (21,793 and 69,722).

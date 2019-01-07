@@ -1,0 +1,318 @@
+---
+title: "Data Analytics - Final Project"
+author: "Amanda Le, Natasha Stewart, Michell Li, Ezekiel Hsieh"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_depth: 4
+    toc_float: true
+runtime: shiny
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.world)
+require(MASS)
+require(ISLR)
+require(dplyr)
+require(ggplot2)
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+TBD
+
+## **Connecting to data.world** 
+```{r}
+data.world::set_config(save_config(auth_token = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJwcm9kLXVzZXItY2xpZW50Om5mczI5NiIsImlzcyI6ImFnZW50Om5mczI5Njo6ZGYwNmFkNTYtNzdlMC00NzBkLWI2MTYtZTgwNmQ5NWJmNDE5IiwiaWF0IjoxNTExNzk4ODkzLCJyb2xlIjpbInVzZXJfYXBpX3JlYWQiLCJ1c2VyX2FwaV93cml0ZSIsInVzZXJfYXBpX2FkbWluIl0sImdlbmVyYWwtcHVycG9zZSI6dHJ1ZX0.Qfijl3y-NT8KTS7hZ9IUO1Ma7wTJjiQ8dkD9hDXI1myzRwdQjWJaBqXW0nnrIqskL9W8oOR8fFiORbXdtDj6aQ"))
+project <- "https://data.world/nfs296/f-17-eda-project-5"
+employee_comp <- data.world::query(
+  data.world::qry_sql("SELECT year_type, year, organization_group_code,organization_group, department_code, department, 
+union_code, job_family_code, job_family, job_code, job, employee_identifier, salaries, 
+overtime, other_salaries, total_salary, retirement, health_dental, other_benefits, total_benefits, total_compensation
+                      FROM Employee_Compensation_SF3"),
+  dataset = project
+  )
+
+attach(employee_comp)
+summary(employee_comp)
+```
+
+## Data Visualization and Descriptive Analysis
+To make the data easier to analyze, I created new categorical variable using the salary data. The first category comprises salaries below the 25th percentile; the second category comprises salaries from the 25th percentile to the 50th percentile; the third category comprises salaries from the 50th percentile to the 75th percentile; and the fourth category comprises salaries above the 75th percentile.
+```{r}
+library(ggplot2)
+library(vcd)
+employee_comp2 <- data.world::query(
+  data.world::qry_sql("SELECT year_type, year, organization_group_code,organization_group, department_code, department, 
+union_code, job_family_code, job_family, job_code, job, employee_identifier, salaries, 
+overtime, other_salaries, total_salary, retirement, health_dental, other_benefits, total_benefits, total_compensation
+                      FROM Employee_Compensation_SF3"),
+  dataset = project
+  )
+employee_comp2$salaries.recode1[employee_comp2$salaries<23793] <- 0
+employee_comp2$salaries.recode1[employee_comp2$salaries>= 23793 & employee_comp2$salaries<62792] <- 1
+employee_comp2$salaries.recode1[employee_comp2$salaries>= 62792 & employee_comp2$salaries<93119] <- 2
+employee_comp2$salaries.recode1[employee_comp2$salaries>=93119] <- 3
+employee_comp2$salaries.recode1 <- as.factor(employee_comp2$salaries.recode1)
+plot(employee_comp2$salaries.recode1,job_family_code)
+plot(employee_comp2$salaries.recode1,health_dental)
+plot(employee_comp2$salaries.recode1,overtime)
+plot(employee_comp2$job_family_code,employee_comp2$overtime)
+plot(employee_comp2$job_family_code,employee_comp2$total_benefits)
+plot(employee_comp2$job_family_code,employee_comp2$total_salary)
+plot(employee_comp2$organization_group_code,employee_comp2$overtime)
+plot(employee_comp2$union_code,employee_comp2$retirement)
+employee_comp2$year <- as.factor(year)
+employee_comp2$salaries.recode1 <- NULL
+employee_comp2$salaries.recode2 <- NULL
+employee_comp2$saralies.recode3 <- NULL
+employee_comp2$salaries.recode4 <- NULL
+
+```
+Power-law residual analysis
+```{r}
+require(dplyr)
+library(tidyverse)
+library(modelr)
+#New data frame called power_law which filters out extreme salariess and takes the log of salaries and health_dental
+power_law <- employee_comp %>% dplyr::filter(health_dental>0, salaries>0) %>% dplyr::mutate(lsalaries = log2(salaries), lhealth_dental = log2(health_dental))
+#The remainder of the code closely follows the procedure presented in class
+ggplot(power_law, aes(x=lhealth_dental, y=lsalaries)) + geom_point()
+mod_power_law <- lm(lsalaries ~ lhealth_dental, data = power_law)
+summary(mod_power_law)
+plot(mod_power_law)
+#r^2 indcates a small-medium effect
+grid <- power_law %>% data_grid(lhealth_dental = seq_range(lhealth_dental, 10)) %>% 
+  add_predictions(mod_power_law, "lsalaries") %>% mutate(salaries = 2 ^ lsalaries, health_dental = 2 ^ lhealth_dental)
+ggplot(power_law, aes(lhealth_dental, lsalaries)) + 
+  geom_point() + 
+  geom_line(data = grid, colour = "red", size = 1)
+ggplot(power_law, aes(x=health_dental, y=salaries)) + geom_point() + 
+  geom_line(data = grid, colour = "red", size = 1)
+
+#Simple linear model for comparison
+linear_model <- lm(salaries~health_dental)
+summary(linear_model)
+
+```
+#Exponential Transformation
+```{r}
+
+#Filter out extreme salaries
+
+exp_grw <- employee_comp %>% dplyr::filter(health_dental>0,salaries>0) %>% dplyr::mutate(lsalaries = log2(salaries))
+ggplot(exp_grw, aes(x=health_dental, y=salaries)) + geom_point()
+ggplot(exp_grw, aes(health_dental, lsalaries)) + geom_hex(bins = 50)
+
+mod_exp_grw <- lm(lsalaries ~ health_dental, data = exp_grw)
+summary(mod_exp_grw)
+
+grid <- exp_grw %>% data_grid(health_dental = seq_range(health_dental, 20)) %>% 
+  add_predictions(mod_exp_grw, "lsalaries") %>% mutate(salaries = 2 ^ lsalaries)
+
+ggplot(exp_grw, aes(health_dental, lsalaries)) + 
+  geom_point() + 
+  geom_line(data = grid, colour = "red", size = 1)
+
+ggplot(exp_grw, aes(x=health_dental, y=salaries)) + geom_point() + 
+  geom_line(data = grid, colour = "red", size = 1)
+
+```
+
+```{r}
+train = employee_identifier > 26999 
+employee_comp$salaries.recode2 <- NA
+employee_comp$salaries.recode2[employee_comp$salaries>= 62792] <- 1
+employee_comp$salaries.recode2[employee_comp$salaries< 62792] <- 0 
+ggplot(employee_comp, aes(x=health_dental, y=employee_comp$salaries.recode2)) + geom_point() + geom_smooth(method="glm", method.args=list(family="binomial"))
+glm.fit2=glm(employee_comp$salaries.recode2~health_dental,
+             employee_comp,family=binomial, subset=train)
+glm.probs2=predict(glm.fit2,employee_comp[!train,],type='response') 
+
+
+glm.pred2=ifelse(glm.probs2 > 0.476,1,0)
+salaries.recode2test=employee_comp$salaries.recode2[!train]
+table(glm.pred2,salaries.recode2test)
+mean(glm.pred2==salaries.recode2test)
+
+```
+
+```{r}
+#ROC and cost curves
+#Code taken from https://www.r-bloggers.com/illustrated-guide-to-roc-and-auc/ and modified
+
+calculate_roc <- function(employee_comp, cost_of_false_positive, cost_of_false_negative, n=100) {
+  true_positive_rate <- function(employee_comp, threshold) {
+    sum(glm.probs2 >= threshold & employee_comp$salaries.recode2[!train] == 1) / sum(employee_comp$salaries.recode2[!train] == 1)
+  }
+  
+  false_positive_rate <- function(employee_comp, threshold) {
+    sum(glm.probs2 >= threshold & employee_comp$salaries.recode2[!train] == 0) / sum(employee_comp$salaries.recode2[!train] == 0)
+  }
+  
+  cost <- function(employee_comp, threshold, cost_of_false_positive, cost_of_false_negative) {
+    sum(glm.probs2 >= threshold & employee_comp$salaries.recode2[!train] == 0) * cost_of_false_positive + sum(glm.probs2 < threshold & employee_comp$salaries.recode2[!train] == 1) * cost_of_false_negative
+  }
+  
+  roc <- data.frame(threshold = seq(0,1,length.out=n), true_positive_rate=NA, false_positive_rate=NA)
+  roc$true_positive_rate <- sapply(roc$threshold, function(th) true_positive_rate(employee_comp, th))
+  roc$false_positive_rate <- sapply(roc$threshold, function(th) false_positive_rate(employee_comp, th))
+  roc$cost <- sapply(roc$threshold, function(th) cost(employee_comp, th, cost_of_false_positive, cost_of_false_negative))
+  
+  return(roc)
+}
+roc <- calculate_roc(employee_comp,1,1,n=1000)
+plot(roc$false_positive_rate,roc$true_positive_rate, main="ROC",
+  xlab="False Positive Rate", ylab="True Positive Rate")
+
+
+```
+
+```{r}
+qda.fit = qda(employee_comp$salaries.recode2~health_dental, data = employee_comp, subset=train)
+qda.fit
+data.train=subset(employee_comp,train)
+qda.class = predict(qda.fit, data.train)
+table(qda.class$class ,data.train$salaries.recode2)
+mean(qda.class$class==data.train$salaries.recode2)
+employee_comp$salaries.recode2 <- NULL
+```
+## K-Nearest Neighbors
+#training data using year
+
+library(class)
+require(ISLR)
+Xlag=cbind(salaries,total_compensation)
+train=year<2014
+knn.pred=knn(Xlag[train,],Xlag[!train,],total_salary[train],k=1)
+table(knn.pred,total_salary[!train])
+mean(knn.pred==total_salary[!train])
+
+# training data using employee identifier 
+Xlag=cbind(salaries,total_compensation)
+train=employee_identifier<26999
+knn.pred=knn(Xlag[train,],Xlag[!train,],total_salary[train],k=1)
+table(knn.pred,total_salary[!train])
+mean(knn.pred==total_salary[!train])
+```
+#Subset selection
+```{r}
+employee_comp$organization_group_code <- as.factor(employee_comp$organization_group_code)
+employee_comp$union_code <- as.factor(employee_comp$union_code)
+employee_comp$job_family_code <- as.factor(employee_comp$job_family_code)
+require(boot)
+library(leaps)
+regfit.full=regsubsets(union_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp, nvmax=8, really.big = F)
+reg.summary=summary(regfit.full)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+plot(regfit.full,scale="Cp")
+coef(regfit.full,6)
+
+regfit.full=regsubsets(job_family_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp, nvmax=8, really.big = F)
+reg.summary=summary(regfit.full)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+plot(regfit.full,scale="Cp")
+coef(regfit.full,6)
+
+regfit.full=regsubsets(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp, nvmax=8, really.big = F)
+reg.summary=summary(regfit.full)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+plot(regfit.full,scale="Cp")
+coef(regfit.full,5)
+
+#Forward and Backward Selection
+employee_comp$organization_group_code <- as.numeric(employee_comp$organization_group_code)
+na.omit(employee_comp)
+train= train=sample(seq(290391),145000,replace=FALSE)
+regfit.fwd=regsubsets(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[train,],nvmax=6,method="forward")
+summary(regfit.fwd)
+val.errors=rep(NA,6)
+x.test=model.matrix(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[-train,])
+
+
+summary(x.test)
+for(i in 1:6){
+  coefi=coef(regfit.fwd,id=i)
+  names(coefi)
+  pred=x.test[,names(coefi)]%*%coefi
+  val.errors[i]=mean((employee_comp$organization_group_code[-train]-pred)^2)
+}
+plot(sqrt(val.errors),ylab="Root MSE",ylim=c(1.0,1.75),pch=6,type="b")
+points(sqrt(regfit.fwd$rss[-1]/145000),col="blue",pch=6,type="b")
+legend("topright",legend=c("Training","Validation"),col=c("blue","black"),pch=6)
+
+train= train=sample(seq(290391),145000,replace=FALSE)
+regfit.fwd=regsubsets(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[train,],nvmax=6,method="backward")
+summary(regfit.fwd)
+val.errors=rep(NA,6)
+x.test=model.matrix(organization_group_code~overtime+salaries+other_salaries+total_salary+retirement+health_dental+other_benefits+total_benefits,data=employee_comp[-train,])
+
+
+summary(x.test)
+for(i in 1:6){
+  coefi=coef(regfit.fwd,id=i)
+  names(coefi)
+  pred=x.test[,names(coefi)]%*%coefi
+  val.errors[i]=mean((employee_comp$organization_group_code[-train]-pred)^2)
+}
+plot(sqrt(val.errors),ylab="Root MSE",ylim=c(1.0,1.75),pch=6,type="b")
+points(sqrt(regfit.fwd$rss[-1]/145000),col="blue",pch=6,type="b")
+legend("topright",legend=c("Training","Validation"),col=c("blue","black"),pch=6)
+```
+Boosting
+```{r}
+library(dplyr)
+require(randomForest)
+require(MASS)
+set.seed(809985)
+sf_forest = employee_comp %>% dplyr::select(year,overtime,salaries,other_salaries,retirement,health_dental,other_benefits,total_benefits,total_salary,total_compensation, organization_group_code, organization_group, department, department_code, job_family_code,job, job, union_code) %>% dplyr::sample_frac(.05)
+train=sample(1:nrow(sf_forest),1000)
+
+sf_forest$organization_group_code <- as.factor(sf_forest$organization_group_code)
+rf.total_salary=randomForest(organization_group_code ~year+overtime+salaries+other_salaries+retirement+health_dental+other_benefits+total_benefits+total_salary+total_compensation,data=sf_forest,na.action=na.omit,subset=train)
+rf.total_salary
+
+
+
+
+
+```
+
+```{r}
+require(gbm)
+library(dplyr)
+sf_forest <- sf_forest %>%dplyr::rename(OB = `other_benefits`,
+                                       S = `salaries`,
+                                       TB = `total_benefits`,
+                                       HD = `health_dental`,
+                                       R  = `retirement`,
+                                       TC = `total_compensation`,
+                                       OS = `other_salaries`,
+                                       O = `overtime`,
+                                       TS = `total_salary`,
+                                       Y = `year`)
+                                       
+sf_forest$job_family_code <- as.numeric(sf_forest$job_family_code)
+sf_forest <- transform(sf_forest, job_family_code = ifelse(is.na(job_family_code), mean(job_family_code, na.rm=TRUE), job_family_code))
+boost.oil=gbm(job_family_code ~Y+O+S+OS+TB+HD+R+TC+TS,data=sf_forest,distribution="gaussian",n.trees=10000,shrinkage=0.01,interaction.depth=4)
+summary(boost.oil)
+
+boost.oil=gbm(organization_group_code ~Y+O+S+OS+TB+HD+R+TC+TS,data=sf_forest,distribution="gaussian",n.trees=10000,shrinkage=0.01,interaction.depth=4)
+summary(boost.oil)
+
+sf_forest$union_code <- as.numeric(sf_forest$union_code)
+sf_forest <- transform(sf_forest, union_code = ifelse(is.na(union_code), mean(union_code, na.rm=TRUE), union_code))
+boost.oil=gbm(union_code ~Y+O+S+OS+TB+HD+R+TC+TS,data=sf_forest,distribution="gaussian",n.trees=10000,shrinkage=0.01,interaction.depth=4)
+summary(boost.oil)
+
+```

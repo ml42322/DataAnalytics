@@ -1,0 +1,48 @@
+---
+title: "Data Analytics - Project 3"
+author: "Amanda Le, Natasha Stewart, Michell Li, Ezekiel Hsieh"
+output:
+  html_notebook:
+    code_folding: hide
+    toc: true
+    toc_depth: 4
+    toc_float: true
+runtime: shiny
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.world)
+require(MASS)
+require(ISLR)
+require(dplyr)
+require(ggplot2)
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+TBD
+
+## **Connecting to data.world** 
+```{r}
+project <- "https://data.world/nfs296/f-17-eda-project-5"
+data.world::set_config(cfg_env("DW_API"))
+data <- data.world::query(
+  data.world::qry_sql("SELECT *
+      FROM delayedflights
+      LIMIT 5000"),
+  dataset = project
+)
+
+attach(data)
+```
+
+## Initial Exploratory Analysis
+```{r}
+summary(data)
+```
